@@ -1,0 +1,10 @@
+[package]
+name = "ratatuio"
+version = "0.0.6"
+edition = "2021"
+authors = ["Io-Maciek"]
+description = "This library expands on ratatui by abstracting main methods to different modules."
+
+[dependencies]
+crossterm = "0.28.1"
+ratatui = {version = "0.29.0", features = ["unstable-widget-ref"]}
