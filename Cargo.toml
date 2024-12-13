@@ -6,7 +6,6 @@ authors = ["Io-Maciek"]
 description = "This library expands on ratatui by abstracting main methods to different modules."
 license-file = "LICENSE"
 repository = "https://github.com/Io-Maciek/ratatuio"
-categories = ["command-line interface"]
 
 [dependencies]
 crossterm = "0.28.1"
