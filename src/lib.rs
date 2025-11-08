@@ -11,8 +11,8 @@
 //! Add required imports.
 //!
 //! ```
-//! use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 //! use ratatuio::{app, view::View};
+//! use ratatuio::ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 //! use std::io;
 //! ```
 //!
@@ -49,6 +49,7 @@
 //! We can implement this method and using Rusts' match statement catch when user is pressing key 'q' or 'Q':
 //!
 //! ```
+//! use ratatuio::crossterm::event::{Event, KeyEventKind, KeyCode};
 //! impl View for MainPage{
 //!     //...
 //!
@@ -75,5 +76,7 @@
 //! 
 //! Inside `handle_events` we are checking when user is pressing key 'q' or 'Q' after which we are accessing application state [`app::APPLICATION`] and editing its 'is_running' value, which will exit out of the program loop on the next iteration.
 
+pub use ratatui;
+pub use crossterm;
 pub mod app;
 pub mod view;
