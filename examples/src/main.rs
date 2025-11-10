@@ -8,9 +8,6 @@ use ratatuio::ratatui::{
 use ratatuio::{app, view::View};
 use ratatuio::crossterm::event::{Event, KeyCode};
 use std::io;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::thread;
-use std::time::Duration;
 
 // === Navigation Helper ===
 fn handle_navigation(event: &Event, current: &str) -> Option<Box<dyn View + Send + Sync>> {

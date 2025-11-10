@@ -4,7 +4,7 @@
 //! To run application use methods from module [`app`]:
 //! 1. Initialize the app with [`app::init()`] and provide [`view::View`].
 //! 2. Run the application loop [`app::run()`].
-//! 3. Done! After compilation you should see your app running in the console.
+//! 3. When quitting, call [`app::quit()`] to insure proper and clean exit.
 //!
 //! ## Basic example
 //!
@@ -58,12 +58,7 @@
 //!             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
 //!                 match key_event.code {
 //!                     KeyCode::Char('q') | KeyCode::Char('Q') => {
-//!                         app::APPLICATION
-//!                             .write()
-//!                             .unwrap()
-//!                             .as_mut()
-//!                             .unwrap()
-//!                             .is_running = false
+//!                         app::quit()
 //!                     },
 //!                     _ => {}
 //!                 }

@@ -4,6 +4,7 @@
 //! - [`init()`] - Initializes the application.
 //! - [`run()`] - Starts the main loop.
 //! - [`change_view()`] - Changes the main view.
+//! - [`quit()`] - When closing application.
 
 use crate::view::{View, ViewWidgetWrapper};
 use ratatui::widgets::WidgetRef;
@@ -61,6 +62,7 @@ pub fn init<T: View + Sync + Send + 'static>(view: T) {
 /// - Draw the current view using [`View::render_view()`].
 /// - Dispatch input events to [`View::handle_events()`].
 /// - Switch to a new view if [`change_view()`] was called.
+/// - Terminate application on [`quit()`].
 pub fn run() -> io::Result<()> {
     let mut terminal = ratatui::init();
 
@@ -117,7 +119,15 @@ pub fn run() -> io::Result<()> {
             .is_running;
     }
 
+    // clean up
     ratatui::restore();
+
+    let mut mainpage = VIEW.write().expect("Failed to lock VIEW");
+    *mainpage = None;
+
+    let mut app = APPLICATION.write().expect("Failed to lock APPLICATION");
+    *app = None;
+
     Ok(())
 }
 
@@ -140,7 +150,7 @@ where
     CHANGE_VIEW.store(true, Ordering::SeqCst);
 }
 
-/// This function will stop the main application loop on the next tick.
+/// This function will stop the main application loop on the next frame.
 /// 
 /// NOTE: This function MUST be called after [`init()`].
 pub fn quit(){
