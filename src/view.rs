@@ -13,6 +13,13 @@ pub trait View {
     }
 
     fn render_view(&self, area: Rect, buf: &mut Buffer);
+
+    /// This method runs each frame
+    fn update(&mut self){}
+    /// This method runs on the first frame that the view will be rendered.
+    fn on_appear(&mut self) {}
+    /// This method runs just before the view will disappear.
+    fn on_disappear(&mut self) {}
 }
 
 pub(crate) struct ViewWidgetWrapper<'a>(pub(crate) &'a Box<dyn View + Send + Sync>);

@@ -4,15 +4,15 @@
 //! To run application use methods from module [`app`]:
 //! 1. Initialize the app with [`app::init()`] and provide [`view::View`].
 //! 2. Run the application loop [`app::run()`].
-//! 3. Done! After compilation you should see your app running in the console.
+//! 3. When quitting, call [`app::quit()`] to insure proper and clean exit.
 //!
 //! ## Basic example
 //!
 //! Add required imports.
 //!
 //! ```
-//! use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 //! use ratatuio::{app, view::View};
+//! use ratatuio::ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 //! use std::io;
 //! ```
 //!
@@ -49,6 +49,7 @@
 //! We can implement this method and using Rusts' match statement catch when user is pressing key 'q' or 'Q':
 //!
 //! ```
+//! use ratatuio::crossterm::event::{Event, KeyEventKind, KeyCode};
 //! impl View for MainPage{
 //!     //...
 //!
@@ -57,12 +58,7 @@
 //!             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
 //!                 match key_event.code {
 //!                     KeyCode::Char('q') | KeyCode::Char('Q') => {
-//!                         app::APPLICATION
-//!                             .write()
-//!                             .unwrap()
-//!                             .as_mut()
-//!                             .unwrap()
-//!                             .is_running = false
+//!                         app::quit()
 //!                     },
 //!                     _ => {}
 //!                 }
@@ -75,5 +71,7 @@
 //! 
 //! Inside `handle_events` we are checking when user is pressing key 'q' or 'Q' after which we are accessing application state [`app::APPLICATION`] and editing its 'is_running' value, which will exit out of the program loop on the next iteration.
 
+pub use ratatui;
+pub use crossterm;
 pub mod app;
 pub mod view;
