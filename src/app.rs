@@ -1,167 +1,297 @@
-//! This module contains the primary methods for initializing, starting and configuring the application.
-//! 
-//! # Methods
-//! - [`init()`] - Initializes the application.
-//! - [`run()`] - Starts the main loop.
-//! - [`change_view()`] - Changes the main view.
-//! - [`quit()`] - When closing application.
+//! This module contains [`App`] (owns the main loop) and [`Context`] (lets views
+//! talk back to the application).
+//!
+//! - [`App::new()`] - creates the application with a starting view.
+//! - [`App::tick_rate()`] - optionally changes how often [`View::update()`] runs.
+//! - [`App::run()`] - initializes the terminal, runs the loop and always restores the terminal.
+//! - [`Context::change_view()`] - requests a view change.
+//! - [`Context::quit()`] - requests application exit.
 
-use crate::view::{View, ViewWidgetWrapper};
-use ratatui::widgets::WidgetRef;
+use crate::view::View;
+use crossterm::{
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+        EnableMouseCapture,
+    },
+    execute,
+};
+use ratatui::DefaultTerminal;
 use std::{
     io,
-    sync::{Mutex, RwLock, atomic::{AtomicBool, Ordering}}, time::Duration,
+    time::{Duration, Instant},
 };
-use lazy_static::lazy_static;
 
-/// A global, thread-safe, mutable application state.
+/// Handle passed to a [`View`] so it can control the application.
 ///
-/// This static variable holds the application state. It is wrapped in an [`RwLock`] to allow
-/// safe concurrent read/write access. The `Option<App>` inside the `RwLock` allows the state
-/// to be either `Some(App)` when the application is initialized or `None` if the application
-/// has not been initialized yet.
-pub static APPLICATION: RwLock<Option<App>> = RwLock::new(None);
-
-/// A global, thread-safe, mutable view state.
-///
-/// This static variable holds the current view of the application. It is wrapped in an [`RwLock`] 
-/// to ensure safe concurrent access and modification.
-pub static VIEW: RwLock<Option<Box<dyn View + Sync + Send>>> = RwLock::new(None);
-
-
-static CHANGE_VIEW: AtomicBool = AtomicBool::new(false);
-lazy_static! {
-    static ref NEXT_VIEW: Mutex<Option<Box<dyn View + Sync + Send>>> = Mutex::new(None);
+/// Requests are applied by the main loop after the current callback returns.
+pub struct Context {
+    next_view: Option<Box<dyn View>>,
+    quit: bool,
 }
 
-/// Represents the main application state.
+impl Context {
+    fn new() -> Self {
+        Self {
+            next_view: None,
+            quit: false,
+        }
+    }
+
+    /// Requests a switch to a new view.
+    ///
+    /// The current view gets [`View::on_disappear()`], the new one gets [`View::on_appear()`].
+    /// If called multiple times before the loop applies it, the last view wins.
+    pub fn change_view(&mut self, view: impl View + 'static) {
+        self.next_view = Some(Box::new(view));
+    }
+
+    /// Requests the application to exit. Takes precedence over a pending [`Context::change_view()`].
+    pub fn quit(&mut self) {
+        self.quit = true;
+    }
+}
+
+/// The application. Owns the current view and runs the main loop.
 pub struct App {
-    pub is_running: bool,
+    view: Box<dyn View>,
+    tick_rate: Duration,
+    mouse: bool,
+    paste: bool,
 }
 
-/// Initializes the application with the provided view. Must be run before any other application code like [`run()`].
-/// 
-/// This function:
-/// - Initializes [`VIEW`]
-/// - Initializes [`APPLICATION`]
-pub fn init<T: View + Sync + Send + 'static>(view: T) {
-    let mut mainpage = VIEW.write().expect("Failed to lock VIEW");
-    if mainpage.is_none() {
-        *mainpage = Some(Box::new(view));
+impl App {
+    /// Creates a new application starting with `view`.
+    pub fn new(view: impl View + 'static) -> Self {
+        Self {
+            view: Box::new(view),
+            tick_rate: Duration::from_millis(16),
+            mouse: false,
+            paste: false,
+        }
     }
 
-    let mut app = APPLICATION.write().expect("Failed to lock APPLICATION");
-    if app.is_none() {
-        *app = Some(App { is_running: true });
+    /// Sets how often [`View::update()`] is called (default: 16 ms, about 60 Hz).
+    pub fn tick_rate(mut self, tick_rate: Duration) -> Self {
+        self.tick_rate = tick_rate;
+        self
     }
-}
 
-/// Starts the main application loop.
-/// 
-/// While the application is running, this function will:
-/// - Draw the current view using [`View::render_view()`].
-/// - Dispatch input events to [`View::handle_events()`].
-/// - Switch to a new view if [`change_view()`] was called.
-/// - Terminate application on [`quit()`].
-pub fn run() -> io::Result<()> {
-    let mut terminal = ratatui::init();
+    /// Enables mouse capture, so [`View::on_mouse()`] receives events (default: off).
+    pub fn mouse(mut self, enabled: bool) -> Self {
+        self.mouse = enabled;
+        self
+    }
 
-    let mut is_running = APPLICATION
-        .read()
-        .unwrap()
-        .as_ref()
-        .expect("APPLICATION is None. Did you run app::init()?")
-        .is_running;
+    /// Enables bracketed paste, so [`View::on_paste()`] receives events (default: off).
+    pub fn paste(mut self, enabled: bool) -> Self {
+        self.paste = enabled;
+        self
+    }
 
-    while is_running {
-        // Handle queued view change
+    /// Initializes the terminal and runs the main loop until [`Context::quit()`] is called.
+    ///
+    /// The terminal is always restored, also when the loop returns an error.
+    pub fn run(mut self) -> io::Result<()> {
+        let mut terminal = ratatui::init();
+        let result = self
+            .enable_features()
+            .and_then(|_| self.main_loop(&mut terminal));
+        self.disable_features();
+        ratatui::restore();
+        result
+    }
 
-        {
-            let mut mainpage = VIEW.write().expect("Failed to lock VIEW during change");
+    fn enable_features(&self) -> io::Result<()> {
+        if self.mouse {
+            execute!(io::stdout(), EnableMouseCapture)?;
+        }
+        if self.paste {
+            execute!(io::stdout(), EnableBracketedPaste)?;
+        }
+        Ok(())
+    }
 
-            if CHANGE_VIEW.swap(false, Ordering::SeqCst) {
+    fn disable_features(&self) {
+        // Best effort: we are already shutting down.
+        if self.mouse {
+            let _ = execute!(io::stdout(), DisableMouseCapture);
+        }
+        if self.paste {
+            let _ = execute!(io::stdout(), DisableBracketedPaste);
+        }
+    }
 
+    fn main_loop(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        let mut ctx = Context::new();
+        let mut last_update = Instant::now();
 
+        self.view.on_appear();
 
-                if let Some(next_view) = NEXT_VIEW.lock().unwrap().take() {
-                    mainpage.as_mut().unwrap().on_disappear();
-                    *mainpage = Some(next_view);
-                    mainpage.as_mut().unwrap().on_appear();
+        loop {
+            terminal.draw(|frame| self.view.render(frame))?;
+
+            // Wait for input, but no longer than until the next tick.
+            let timeout = self.tick_rate.saturating_sub(last_update.elapsed());
+            if event::poll(timeout)? {
+                // Drain everything that is already queued.
+                loop {
+                    let ev = event::read()?;
+                    self.view.handle_event(&ev, &mut ctx)?;
+                    if ctx.quit || ctx.next_view.is_some() || !event::poll(Duration::ZERO)? {
+                        break;
+                    }
                 }
             }
 
-            mainpage.as_mut().unwrap().update();
+            let elapsed = last_update.elapsed();
+            if elapsed >= self.tick_rate {
+                self.view.update(&mut ctx, elapsed);
+                last_update = Instant::now();
+            }
+
+            if self.apply(&mut ctx) {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Applies requests collected in `ctx`. Returns `true` when the application should exit.
+    ///
+    /// Kept separate from the loop so it can be tested without a real terminal.
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        if ctx.quit {
+            self.view.on_disappear();
+            return true;
         }
 
-        // Draw the current view
-        terminal.draw(|frame: &mut ratatui::Frame<'_>| {
-            ViewWidgetWrapper(&VIEW.read().unwrap().as_ref().unwrap())
-                .render_ref(frame.area(), frame.buffer_mut());
-        })?;
-
-        // Handle events
-        if crossterm::event::poll(Duration::from_millis(8))? {
-            let event = crossterm::event::read()?;
-            VIEW
-                .write()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .handle_events(&event)?;
+        if let Some(next) = ctx.next_view.take() {
+            self.view.on_disappear();
+            self.view = next;
+            self.view.on_appear();
         }
-
-        // Update running state
-        is_running = APPLICATION
-            .read()
-            .unwrap()
-            .as_ref()
-            .expect("APPLICATION is None. Did you run app::init()?")
-            .is_running;
+        false
     }
-
-    // clean up
-    ratatui::restore();
-
-    let mut mainpage = VIEW.write().expect("Failed to lock VIEW");
-    *mainpage = None;
-
-    let mut app = APPLICATION.write().expect("Failed to lock APPLICATION");
-    *app = None;
-
-    Ok(())
 }
 
-/// Changes the current view to the new one provided.
-///
-/// NOTE: This function MUST be called after [`init()`].
-///
-/// # Parameters
-/// - `view`: A struct implementing the [`View`] trait. Represents the new view.
-pub fn change_view<V>(view: V)
-where
-    V: Into<Box<dyn View + Send + Sync>>,
-{
-    if APPLICATION.read().unwrap().is_none() {
-        panic!("APPLICATION is None. Did you run app::init()?");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use ratatui::{backend::TestBackend, widgets::Paragraph, Frame, Terminal};
+    use std::{cell::RefCell, rc::Rc};
+
+    type Log = Rc<RefCell<Vec<String>>>;
+
+    /// Test view: records lifecycle hooks, 'n' switches to view "B", 'q' quits.
+    /// Uses `Rc<RefCell<_>>`, which works because `View` does not require `Send + Sync`.
+    struct Probe {
+        name: &'static str,
+        log: Log,
     }
 
-    let mut next = NEXT_VIEW.lock().unwrap();
-    *next = Some(view.into());
-    CHANGE_VIEW.store(true, Ordering::SeqCst);
-}
-
-/// This function will stop the main application loop on the next frame.
-/// 
-/// NOTE: This function MUST be called after [`init()`].
-pub fn quit(){
-    if APPLICATION.read().unwrap().is_none() {
-        panic!("APPLICATION is None. Did you run app::init()?");
+    impl Probe {
+        fn new(name: &'static str, log: &Log) -> Self {
+            Self { name, log: log.clone() }
+        }
     }
 
-    APPLICATION
-        .write()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .is_running = false;
+    impl View for Probe {
+        fn render(&mut self, frame: &mut Frame) {
+            frame.render_widget(Paragraph::new(self.name), frame.area());
+        }
+        fn on_appear(&mut self) {
+            self.log.borrow_mut().push(format!("{}:appear", self.name));
+        }
+        fn on_disappear(&mut self) {
+            self.log.borrow_mut().push(format!("{}:disappear", self.name));
+        }
+        fn on_key(&mut self, key: KeyEvent, ctx: &mut Context) -> io::Result<()> {
+            match key.code {
+                KeyCode::Char('n') => ctx.change_view(Probe::new("B", &self.log)),
+                KeyCode::Char('q') => ctx.quit(),
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+
+    fn key(c: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+    }
+
+    fn screen(terminal: &Terminal<TestBackend>) -> String {
+        let buf = terminal.backend().buffer();
+        buf.content()
+            .chunks(buf.area.width as usize)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn setup() -> (App, Context, Log) {
+        let log: Log = Rc::default();
+        let mut app = App::new(Probe::new("A", &log));
+        app.view.on_appear();
+        (app, Context::new(), log)
+    }
+
+    #[test]
+    fn view_change_runs_hooks_in_order() {
+        let (mut app, mut ctx, log) = setup();
+
+        app.view.handle_event(&key('n'), &mut ctx).unwrap();
+        assert!(!app.apply(&mut ctx));
+
+        assert_eq!(*log.borrow(), ["A:appear", "A:disappear", "B:appear"]);
+    }
+
+    #[test]
+    fn quit_calls_on_disappear_and_wins_over_change_view() {
+        let (mut app, mut ctx, log) = setup();
+
+        app.view.handle_event(&key('n'), &mut ctx).unwrap();
+        app.view.handle_event(&key('q'), &mut ctx).unwrap();
+        assert!(app.apply(&mut ctx));
+
+        assert_eq!(*log.borrow(), ["A:appear", "A:disappear"]);
+    }
+
+    #[test]
+    fn last_change_view_wins() {
+        let (mut app, mut ctx, log) = setup();
+
+        ctx.change_view(Probe::new("B", &log));
+        ctx.change_view(Probe::new("C", &log));
+        app.apply(&mut ctx);
+
+        assert_eq!(*log.borrow(), ["A:appear", "A:disappear", "C:appear"]);
+    }
+
+    #[test]
+    fn key_release_is_ignored() {
+        let (mut app, mut ctx, _log) = setup();
+
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        app.view.handle_event(&release, &mut ctx).unwrap();
+
+        assert!(!ctx.quit);
+    }
+
+    #[test]
+    fn renders_current_view_to_test_backend() {
+        let (mut app, mut ctx, _log) = setup();
+        let mut terminal = Terminal::new(TestBackend::new(10, 1)).unwrap();
+
+        terminal.draw(|f| app.view.render(f)).unwrap();
+        assert!(screen(&terminal).starts_with('A'));
+
+        app.view.handle_event(&key('n'), &mut ctx).unwrap();
+        app.apply(&mut ctx);
+        terminal.draw(|f| app.view.render(f)).unwrap();
+        assert!(screen(&terminal).starts_with('B'));
+    }
 }

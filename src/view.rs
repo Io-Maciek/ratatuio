@@ -1,31 +1,46 @@
 //! See [`View`].
 
-use crossterm::event::Event;
-use ratatui::{buffer::Buffer, layout::Rect, widgets::WidgetRef};
-use std::io;
+use crate::app::Context;
+use crossterm::event::{Event, KeyEvent, KeyEventKind, MouseEvent};
+use ratatui::Frame;
+use std::{io, time::Duration};
 
-/// Trait representing a view of application.
+/// Trait representing a single screen of the application.
 ///
-/// This trait can be used to define the rendering [`View::render_view()`] of its properties and how it should handle events [`View::handle_events()`].
+/// Only [`View::render()`] is required. Everything else has a default no-op implementation.
+///
+/// Views are owned by [`crate::app::App`] and run on a single thread, so they do not need
+/// to be `Send` or `Sync` and can freely use `Rc<RefCell<_>>` and similar types.
 pub trait View {
-    fn handle_events(&mut self, _event: &Event) -> io::Result<()> {
+    /// Called for every input event. Use `ctx` to switch views or quit the application.
+    /*fn handle_event(&mut self, _event: &Event, _ctx: &mut Context) -> io::Result<()> {
         Ok(())
+    }*/
+    fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> io::Result<()> {
+        match event {
+            Event::Key(k) if k.kind == KeyEventKind::Press => self.on_key(*k, ctx),
+            Event::Mouse(m) => self.on_mouse(*m, ctx),
+            Event::Resize(w, h) => self.on_resize(*w, *h, ctx),
+            Event::Paste(s) => self.on_paste(s, ctx),
+            _ => Ok(()),
+        }
     }
 
-    fn render_view(&self, area: Rect, buf: &mut Buffer);
+    /// Called at the app's tick rate. `dt` is the time since the previous call.
+    fn update(&mut self, _ctx: &mut Context, _dt: Duration) {}
 
-    /// This method runs each frame
-    fn update(&mut self){}
-    /// This method runs on the first frame that the view will be rendered.
+    /// Draws the view. Gives full access to the ratatui [`Frame`]
+    /// (stateful widgets, cursor position, etc.).
+    fn render(&mut self, frame: &mut Frame);
+
+    /// Called once, right before the view is drawn for the first time.
     fn on_appear(&mut self) {}
-    /// This method runs just before the view will disappear.
+
+    /// Called once, right before the view is replaced or the application exits.
     fn on_disappear(&mut self) {}
-}
 
-pub(crate) struct ViewWidgetWrapper<'a>(pub(crate) &'a Box<dyn View + Send + Sync>);
-
-impl<'a> WidgetRef for ViewWidgetWrapper<'a> {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        self.0.render_view(area, buf);
-    }
+    fn on_key(&mut self, _key: KeyEvent, _ctx: &mut Context) -> io::Result<()> { Ok(()) }
+    fn on_mouse(&mut self, _m: MouseEvent, _ctx: &mut Context) -> io::Result<()> { Ok(()) }
+    fn on_resize(&mut self, _w: u16, _h: u16, _ctx: &mut Context) -> io::Result<()> { Ok(()) }
+    fn on_paste(&mut self, _text: &str, _ctx: &mut Context) -> io::Result<()> { Ok(()) }
 }

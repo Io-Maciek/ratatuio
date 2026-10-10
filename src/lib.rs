@@ -1,77 +1,67 @@
-//! This library expands on [ratatui] by abstracting main methods to different modules, which can be helpful in making modular applications with many [`view::View`]s as well as using architectural patterns like MVVM.
+//! This library expands on [ratatui] by abstracting the main loop and view navigation, which can be
+//! helpful in making modular applications with many [`view::View`]s as well as using architectural
+//! patterns like MVVM.
 //!
 //! ## How to run
-//! To run application use methods from module [`app`]:
-//! 1. Initialize the app with [`app::init()`] and provide [`view::View`].
-//! 2. Run the application loop [`app::run()`].
-//! 3. When quitting, call [`app::quit()`] to insure proper and clean exit.
+//! 1. Implement [`view::View`] for your screen (only [`view::View::render()`] is required).
+//! 2. Create the application with [`app::App::new()`] and the starting view.
+//! 3. Call [`app::App::run()`]. The terminal is restored automatically on exit or error.
+//! 4. Inside a view, use [`app::Context`] to switch views ([`app::Context::change_view()`])
+//!    or exit ([`app::Context::quit()`]).
 //!
 //! ## Basic example
 //!
-//! Add required imports.
-//!
-//! ```
-//! use ratatuio::{app, view::View};
-//! use ratatuio::ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
+//! ```no_run
+//! use ratatuio::app::{App, Context};
+//! use ratatuio::view::View;
+//! use ratatuio::crossterm::event::{KeyCode, KeyEvent};
+//! use ratatuio::ratatui::{widgets::Paragraph, Frame};
 //! use std::io;
-//! ```
 //!
-//! Create a struct that will store the state of current view.
-//!
-//! ```
 //! struct MainPage;
-//! ```
 //!
-//! Implement [`view::View`] trait and provide the method [`view::View::render_view()`].
-//!
-//! ```
-//! impl View for MainPage{
-//!     fn render_view(&self, area: Rect, buf: &mut Buffer){
-//!         "Hello World!".render(area, buf);
+//! impl View for MainPage {
+//!     fn render(&mut self, frame: &mut Frame) {
+//!         frame.render_widget(Paragraph::new("Hello World! Press 'q' to quit."), frame.area());
 //!     }
-//! }
-//! ```
 //!
-//! And finally initialize and run the app with created MainPage view in the main method.
-//!
-//! ```
-//! fn main() -> io::Result<()> {
-//!     app::init(MainPage);
-//!     app::run()
-//! }
-//! ```
-//!
-//! ### Adding event handler
-//!
-//! Above example will run in console however it will be impossible to close. To implement closing the application we first need to handle key press event.
-//!
-//! In trait [`view::View`] there is an optional method to implement [`view::View::handle_events()`] with parameter [`crossterm::event::Event`].
-//! We can implement this method and using Rusts' match statement catch when user is pressing key 'q' or 'Q':
-//!
-//! ```
-//! use ratatuio::crossterm::event::{Event, KeyEventKind, KeyCode};
-//! impl View for MainPage{
-//!     //...
-//!
-//!     fn handle_events(&mut self, event: &Event) -> io::Result<()> {
-//!         match event {
-//!             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-//!                 match key_event.code {
-//!                     KeyCode::Char('q') | KeyCode::Char('Q') => {
-//!                         app::quit()
-//!                     },
-//!                     _ => {}
-//!                 }
-//!             }
-//!             _ => {}
+//!     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context) -> io::Result<()> {
+//!         if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
+//!             ctx.quit();
 //!         }
 //!         Ok(())
 //!     }
+//! }
+//!
+//! fn main() -> io::Result<()> {
+//!     App::new(MainPage).run()
+//! }
 //! ```
-//! 
-//! Inside `handle_events` we are checking when user is pressing key 'q' or 'Q' after which we are accessing application state [`app::APPLICATION`] and editing its 'is_running' value, which will exit out of the program loop on the next iteration.
+//!
+//! ## Handling input
+//!
+//! For the typical case override the specialized methods: [`view::View::on_key()`],
+//! [`view::View::on_mouse()`], [`view::View::on_resize()`] and [`view::View::on_paste()`].
+//! Key events are filtered to `Press` only, so actions do not fire twice on Windows.
+//!
+//! [`view::View::on_mouse()`] and [`view::View::on_paste()`] receive events only after enabling
+//! them with [`app::App::mouse()`] and [`app::App::paste()`], because the terminal does not
+//! report them by default.
+//!
+//! If you need the raw [`crossterm::event::Event`] (e.g. key releases), override
+//! [`view::View::handle_event()`] instead. Note that this replaces the default dispatching.
+//!
+//! ## Switching views
+//!
+//! Call [`app::Context::change_view()`] from any of the input methods or from
+//! [`view::View::update()`]. The old view receives [`view::View::on_disappear()`] and the new one
+//! [`view::View::on_appear()`].
+//!
+//! ```ignore
+//! ctx.change_view(SettingsPage::new());
+//! ```
 
-pub use ratatui;
 pub use crossterm;
+pub use ratatui;
 pub mod app;
 pub mod view;
